@@ -7,9 +7,6 @@ import * as s3n from "aws-cdk-lib/aws-s3-notifications";
 import * as path from "path";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 
-/**
- * Stack principal que orquesta buckets, Lambdas, API Gateway y los triggers entre los servicios
- */
 export class CdkProjectStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -69,7 +66,7 @@ export class CdkProjectStack extends cdk.Stack {
       })
     );
 
-    // Lambda que procesa automáticamente el JSON generado por Transcribe:
+    // Lambda que procesa automáticamente el JSON generado por Transcribe: [TODO: REVISAR LOS PERSMISOS DE TU CUENTA AWS]
     // - Extrae el texto
     // - Traduce el texto
     // - Sintetiza audio con Polly
@@ -113,16 +110,62 @@ export class CdkProjectStack extends cdk.Stack {
       deployOptions: { stageName: "prod" },
     });
 
-    // Endpoint POST /translate
+    // Endpoint POST /translate con CORS habilitado
     const translateResource = api.root.addResource("translate");
-    translateResource.addMethod("POST", new apigateway.LambdaIntegration(translateFn));
+
+    // Método POST con CORS headers en la integración
+    translateResource.addMethod("POST", new apigateway.LambdaIntegration(translateFn, {
+      proxy: true,
+      integrationResponses: [{
+        statusCode: "200",
+        responseParameters: {
+          "method.response.header.Access-Control-Allow-Origin": "'*'",
+          "method.response.header.Access-Control-Allow-Headers": "'Content-Type'",
+          "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,POST,GET'",
+        },
+      }],
+    }), {
+      methodResponses: [{
+        statusCode: "200",
+        responseParameters: {
+          "method.response.header.Access-Control-Allow-Origin": true,
+          "method.response.header.Access-Control-Allow-Headers": true,
+          "method.response.header.Access-Control-Allow-Methods": true,
+        },
+      }]
+    });
+
+    // Método OPTIONS (CORS preflight)
+    translateResource.addMethod("OPTIONS", new apigateway.MockIntegration({
+      integrationResponses: [{
+        statusCode: "200",
+        responseParameters: {
+          "method.response.header.Access-Control-Allow-Headers": "'Content-Type'",
+          "method.response.header.Access-Control-Allow-Origin": "'*'",
+          "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,POST,GET'",
+        },
+      }],
+      passthroughBehavior: apigateway.PassthroughBehavior.NEVER,
+      requestTemplates: {
+        "application/json": "{\"statusCode\":200}"
+      }
+    }), {
+      methodResponses: [{
+        statusCode: "200",
+        responseParameters: {
+          "method.response.header.Access-Control-Allow-Headers": true,
+          "method.response.header.Access-Control-Allow-Origin": true,
+          "method.response.header.Access-Control-Allow-Methods": true,
+        },
+      }]
+    });
 
     // Salida de consola: endpoint de traducción
     new cdk.CfnOutput(this, "TranslateApiUrl", {
       value: `${api.url}translate`,
     });
 
-    // Salida de consola: endpoint base
+    // Salida de consola: endpoint base (por si quieres exponer más adelante otros recursos)
     new cdk.CfnOutput(this, "VoiceTranslateApiEndpointPolly", {
       value: `${api.url}`,
     });
