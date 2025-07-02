@@ -23,29 +23,29 @@ export class CdkProjectStack extends cdk.Stack {
     });
 
     // // Lambda de transcripción
-    // const transcribeFn = new lambda.Function(this, "TranscribeFunction", {
-    //   runtime: lambda.Runtime.NODEJS_18_X,
-    //   code: lambda.Code.fromAsset(path.join(__dirname, "../src/functions")),
-    //   handler: "transcribe-handler.handler",
-    //   environment: {
-    //     OUTPUT_BUCKET: outputBucket.bucketName,
-    //   },
-    // });
+    const transcribeFn = new lambda.Function(this, "TranscribeFunction", {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      code: lambda.Code.fromAsset(path.join(__dirname, "../src/functions")),
+      handler: "transcribe-handler.handler",
+      environment: {
+        OUTPUT_BUCKET: outputBucket.bucketName,
+      },
+    });
 
-    // audioBucket.grantRead(transcribeFn);
-    // outputBucket.grantWrite(transcribeFn);
+    audioBucket.grantRead(transcribeFn);
+    outputBucket.grantWrite(transcribeFn);
 
-    // transcribeFn.addToRolePolicy(
-    //   new iam.PolicyStatement({
-    //     actions: ["transcribe:StartTranscriptionJob"],
-    //     resources: ["*"],
-    //   })
-    // );
+    transcribeFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["transcribe:StartTranscriptionJob"],
+        resources: ["*"],
+      })
+    );
 
-    // audioBucket.addEventNotification(
-    //   s3.EventType.OBJECT_CREATED,
-    //   new s3n.LambdaDestination(transcribeFn)
-    // );
+    audioBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.LambdaDestination(transcribeFn)
+    );
 
     // Lambda de traducción
     const translateFn = new lambda.Function(this, "TranslateFunction", {
