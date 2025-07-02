@@ -7,22 +7,26 @@ import * as s3n from "aws-cdk-lib/aws-s3-notifications";
 import * as path from "path";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 
+/**
+ * Stack principal que orquesta buckets, Lambdas, API Gateway y los triggers entre los servicios
+ */
 export class CdkProjectStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Buckets
+    // Bucket S3 donde el usuario sube audios para transcribir (entrada)
     const audioBucket = new s3.Bucket(this, "AudioBucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
 
+    // Bucket S3 donde Transcribe escribe los JSONs de resultados (salida de transcripción)
     const outputBucket = new s3.Bucket(this, "OutputBucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
 
-    // // Lambda de transcripción
+    // Lambda para lanzar jobs de transcripción al subir audio
     const transcribeFn = new lambda.Function(this, "TranscribeFunction", {
       runtime: lambda.Runtime.NODEJS_18_X,
       code: lambda.Code.fromAsset(path.join(__dirname, "../src/functions")),
@@ -32,9 +36,11 @@ export class CdkProjectStack extends cdk.Stack {
       },
     });
 
+    // Permisos: leer del bucket de entrada, escribir al bucket de salida
     audioBucket.grantRead(transcribeFn);
     outputBucket.grantWrite(transcribeFn);
 
+    // Permiso IAM para Transcribe API
     transcribeFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["transcribe:StartTranscriptionJob"],
@@ -42,18 +48,20 @@ export class CdkProjectStack extends cdk.Stack {
       })
     );
 
+    // Trigger Lambda: cuando se sube un archivo al bucket de entrada
     audioBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.LambdaDestination(transcribeFn)
     );
 
-    // Lambda de traducción
+    // Lambda expuesta como endpoint para traducción directa (POST /translate)
     const translateFn = new lambda.Function(this, "TranslateFunction", {
       runtime: lambda.Runtime.NODEJS_18_X,
       code: lambda.Code.fromAsset(path.join(__dirname, "../src/functions")),
       handler: "translate-handler.handler",
     });
 
+    // Permiso IAM para Translate API
     translateFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["translate:TranslateText"],
@@ -61,16 +69,62 @@ export class CdkProjectStack extends cdk.Stack {
       })
     );
 
+    // Lambda que procesa automáticamente el JSON generado por Transcribe:
+    // - Extrae el texto
+    // - Traduce el texto
+    // - Sintetiza audio con Polly
+    // - Guarda el resultado de Polly (audio) en el mismo bucket de salida
+    const processTranscriptFn = new lambda.Function(this, "ProcessTranscriptFunction", {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      code: lambda.Code.fromAsset(path.join(__dirname, "../src/functions")),
+      handler: "process-transcript-handler.handler",
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 256,
+      environment: {
+        OUTPUT_BUCKET: outputBucket.bucketName,
+      },
+    });
+
+    // Permisos S3 (leer el JSON y escribir el audio)
+    outputBucket.grantReadWrite(processTranscriptFn);
+
+    // Permisos IAM para Translate y Polly en esta Lambda
+    processTranscriptFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "translate:TranslateText",
+          "polly:SynthesizeSpeech"
+        ],
+        resources: ["*"],
+      })
+    );
+
+    // Trigger Lambda: al crear JSON en outputBucket, dispara processTranscriptFn (solo para archivos .json)
+    outputBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.LambdaDestination(processTranscriptFn), {
+        suffix: ".json"
+      }
+    );
+
+    // API Gateway REST para el endpoint /translate (Lambda HTTP)
     const api = new apigateway.RestApi(this, "VoiceTranslateApi", {
       restApiName: "Voice Translate Service",
       deployOptions: { stageName: "prod" },
     });
 
+    // Endpoint POST /translate
     const translateResource = api.root.addResource("translate");
     translateResource.addMethod("POST", new apigateway.LambdaIntegration(translateFn));
 
+    // Salida de consola: endpoint de traducción
     new cdk.CfnOutput(this, "TranslateApiUrl", {
       value: `${api.url}translate`,
+    });
+
+    // Salida de consola: endpoint base
+    new cdk.CfnOutput(this, "VoiceTranslateApiEndpointPolly", {
+      value: `${api.url}`,
     });
   }
 }
