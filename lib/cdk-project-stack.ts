@@ -46,8 +46,13 @@ export class CdkProjectStack extends cdk.Stack {
 
     audioBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(transcribeFn)
+      new s3n.LambdaDestination(transcribeFn), { suffix: '.wav' }
     );
+    audioBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.LambdaDestination(transcribeFn), { suffix: '.mp3' }
+    );
+
 
     // Lambda expuesta como endpoint para traducción directa (POST /translate)
     const translateFn = new lambda.Function(this, "TranslateFunction", {
@@ -103,7 +108,7 @@ export class CdkProjectStack extends cdk.Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, "../src/functions")),
       handler: "rekognition-handler.handler",
       environment: {
-        BUCKET_NAME: audioBucket.bucketName, 
+        BUCKET_NAME: audioBucket.bucketName,
       },
     });
 
